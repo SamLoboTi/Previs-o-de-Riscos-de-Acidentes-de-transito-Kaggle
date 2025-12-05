@@ -1,0 +1,161 @@
+# Primeiros passos 
+# Bicliotecas que uso 
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import KFold
+from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import LabelEncoder
+
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor
+
+import warnings
+warnings.filterwarnings("ignore")
+
+# Carregamento de Dados 
+
+train = pd.read_csv("/kaggle/input/playground-series-s5e10/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e10/test.csv")
+sample_submission = pd.read_csv("/kaggle/input/playground-series-s5e10/sample_submission.csv")
+
+print(train.shape, test.shape)
+
+# EDA - Visualizações (gráficos, histogramas, boxplots, correlações)Estatísticas descritivasIdentificação de outliersDetecção de valores ausentesCompreensão da distribuição das variáveis**
+
+train.head()
+train.info()
+train["accident_risk"].hist(bins=50)
+plt.title("Distribuição do Target")
+plt.show()
+
+
+
+# Identificar target e features
+
+TARGET = "accident_risk"
+
+X = train.drop(columns=[TARGET, "id"])
+y = train[TARGET]
+X_test = test.drop(columns=["id"])
+
+# Tratar valores faltantes corretamente
+
+for col in X.columns:
+    if X[col].dtype == "object":
+        X[col] = X[col].fillna("Unknown")
+        X_test[col] = X_test[col].fillna("Unknown")
+    else:
+        med = X[col].median()
+        X[col] = X[col].fillna(med)
+        X_test[col] = X_test[col].fillna(med) 
+
+# Encoding categórico 
+
+cat_cols = X.select_dtypes(include="object").columns
+
+for col in cat_cols:
+    le = LabelEncoder()
+    X[col] = le.fit_transform(X[col])
+    X_test[col] = le.transform(X_test[col]) 
+
+# Feature Engineering (melhor parte)
+def add_features(df):
+
+    # binning de distância
+    if "distance_km" in df:
+        df["distance_bin"] = pd.cut(
+            df["distance_km"],
+            bins=[0, 30, 100, 200, 500, 2000],
+            labels=[0, 1, 2, 3, 4]
+        ).astype(int)
+
+    # interação clima x tipo de veículo
+    if "weather" in df and "vehicle_type" in df:
+        df["weather_vehicle"] = df["weather"].astype(str) + "_" + df["vehicle_type"].astype(str)
+
+    return df
+
+X = add_features(X)
+X_test = add_features(X_test)
+
+# encoding para novas features categóricas
+for col in X.select_dtypes(include="object").columns:
+    le = LabelEncoder()
+    X[col] = le.fit_transform(X[col])
+    X_test[col] = le.transform(X_test[col])
+
+# Inicializar modelos estáveis✔️ CatBoost — tende a ser o melhor em tabular
+cat_model = CatBoostRegressor(
+    iterations=1200,
+    learning_rate=0.03,
+    depth=6,
+    loss_function="RMSE",
+    random_seed=42
+)
+
+# LightGBM — rápido e forte
+lgb_model = LGBMRegressor(
+    n_estimators=1500,
+    learning_rate=0.03,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=42
+)
+LightGBM — rápido e forte 
+
+# LGBMRegressor(colsample_bytree=0.8, learning_rate=0.03, n_estimators=1500,
+              random_state=42, subsample=0.8) 
+
+# Validação KFold + Treinamento + Predições 
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+cat_oof = np.zeros(len(X))
+lgb_oof = np.zeros(len(X))
+
+cat_preds = np.zeros(len(X_test))
+lgb_preds = np.zeros(len(X_test)) 
+
+for train_idx, val_idx in kf.split(X):
+    X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+    # === CatBoost ===
+    cat_model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=False)
+    cat_oof[val_idx] = cat_model.predict(X_val)
+    cat_preds += cat_model.predict(X_test) / kf.n_splits
+
+# Medir estabilidade e RMSE 
+rmse_cat = mean_squared_error(y, cat_oof, squared=False)
+rmse_lgb = mean_squared_error(y, lgb_oof, squared=False)
+
+print("RMSE CatBoost:", rmse_cat)
+print("RMSE LightGBM:", rmse_lgb) 
+
+# Ensemble (média ponderada) — quase sempre melhora 
+final_preds = 0.6 * cat_preds + 0.4 * lgb_preds 
+
+# Criar arquivo de submissão 
+sample_submission = pd.read_csv("/kaggle/input/playground-series-s5e10/sample_submission.csv") 
+
+submission = sample_submission.copy()
+submission["accident_risk"] = final_preds
+submission.to_csv("submission.csv", index=False)
+
+submission.head()
+
+
+
+
+
+
+
+
+
+
+
+
+
