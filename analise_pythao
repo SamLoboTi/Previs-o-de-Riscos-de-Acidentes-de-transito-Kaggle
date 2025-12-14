@@ -1,5 +1,4 @@
-# Primeiros passos 
-# Bicliotecas que uso 
+**Bibliotecas**
 
 import numpy as np
 import pandas as pd
@@ -16,25 +15,78 @@ from lightgbm import LGBMRegressor
 import warnings
 warnings.filterwarnings("ignore")
 
-# Carregamento de Dados 
+sns.set(style="whitegrid")
+
+**Carregamento dos dados**
 
 train = pd.read_csv("/kaggle/input/playground-series-s5e10/train.csv")
 test = pd.read_csv("/kaggle/input/playground-series-s5e10/test.csv")
 sample_submission = pd.read_csv("/kaggle/input/playground-series-s5e10/sample_submission.csv")
 
-print(train.shape, test.shape)
+print("Train:", train.shape)
+print("Test:", test.shape)
 
-# EDA - Visualizações (gráficos, histogramas, boxplots, correlações)Estatísticas descritivasIdentificação de outliersDetecção de valores ausentesCompreensão da distribuição das variáveis**
+
+**EDA - Visualizações (gráficos, histogramas, boxplots, correlações)Estatísticas descritivasIdentificação de outliersDetecção de valores ausentesCompreensão da distribuição das variáveis****** 
 
 train.head()
+
+|id|road_type|num_lanes|curvature|speed_limit|lighting|weather|road_signs_present|public_road|time_of_day|holiday|school_season|num_reported_accidents|accident_risk|
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|0|0|urban|2|0.06|35|daylight|rainy|False|True|afternoon|False|True|1|0.13|
+|1|1|urban|4|0.99|35|daylight|clear|True|False|evening|True|True|0|0.35|
+|2|2|rural|4|0.63|70|dim|clear|False|True|morning|True|False|2|0.30|
+|3|3|highway|4|0.07|35|dim|rainy|True|True|morning|False|False|1|0.21|
+|4|4|rural|1|0.58|60|daylight|foggy|False|False|evening|True|False|1|0.56|
+
 train.info()
-train["accident_risk"].hist(bins=50)
-plt.title("Distribuição do Target")
+
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 517754 entries, 0 to 517753
+Data columns (total 14 columns):
+ #   Column                  Non-Null Count   Dtype  
+---  ------                  --------------   -----  
+ 0   id                      517754 non-null  int64  
+ 1   road_type               517754 non-null  object 
+ 2   num_lanes               517754 non-null  int64  
+ 3   curvature               517754 non-null  float64
+ 4   speed_limit             517754 non-null  int64  
+ 5   lighting                517754 non-null  object 
+ 6   weather                 517754 non-null  object 
+ 7   road_signs_present      517754 non-null  bool   
+ 8   public_road             517754 non-null  bool   
+ 9   time_of_day             517754 non-null  object 
+ 10  holiday                 517754 non-null  bool   
+ 11  school_season           517754 non-null  bool   
+ 12  num_reported_accidents  517754 non-null  int64  
+ 13  accident_risk           517754 non-null  float64
+dtypes: bool(4), float64(2), int64(4), object(4)
+memory usage: 41.5+ MB
+
+
+**Distribuição do Target** 
+
+plt.figure(figsize=(8,4))
+sns.histplot(train["accident_risk"], bins=50, kde=True)
+plt.title("Distribuição da Probabilidade de Acidente")
+plt.show()
+
+**Estatísticas descritivas** 
+
+train.describe().T
+
+**Correlação do target**
+
+corr = train.corr(numeric_only=True)["accident_risk"].sort_values(ascending=False)
+
+plt.figure(figsize=(6,10))
+sns.barplot(x=corr.values, y=corr.index)
+plt.title("Correlação das Variáveis com o Risco de Acidente")
 plt.show()
 
 
 
-# Identificar target e features
+**Identificar target e features** 
 
 TARGET = "accident_risk"
 
@@ -42,7 +94,8 @@ X = train.drop(columns=[TARGET, "id"])
 y = train[TARGET]
 X_test = test.drop(columns=["id"])
 
-# Tratar valores faltantes corretamente
+
+**Tratar valores ausentes corretamente**
 
 for col in X.columns:
     if X[col].dtype == "object":
@@ -51,53 +104,67 @@ for col in X.columns:
     else:
         med = X[col].median()
         X[col] = X[col].fillna(med)
-        X_test[col] = X_test[col].fillna(med) 
+        X_test[col] = X_test[col].fillna(med)
 
-# Encoding categórico 
 
+**Encoding Categórico** 
 cat_cols = X.select_dtypes(include="object").columns
 
 for col in cat_cols:
     le = LabelEncoder()
     X[col] = le.fit_transform(X[col])
-    X_test[col] = le.transform(X_test[col]) 
+    X_test[col] = le.transform(X_test[col])
 
-# Feature Engineering (melhor parte)
+
+**FEATURE ENGINEERING** 
 def add_features(df):
 
-    # binning de distância
-    if "distance_km" in df:
-        df["distance_bin"] = pd.cut(
-            df["distance_km"],
-            bins=[0, 30, 100, 200, 500, 2000],
+    # Binning de velocidade (feature forte para risco)
+    if "speed_limit" in df.columns:
+        df["speed_bin"] = pd.cut(
+            df["speed_limit"],
+            bins=[0, 40, 60, 80, 120, 200],
             labels=[0, 1, 2, 3, 4]
         ).astype(int)
 
-    # interação clima x tipo de veículo
-    if "weather" in df and "vehicle_type" in df:
-        df["weather_vehicle"] = df["weather"].astype(str) + "_" + df["vehicle_type"].astype(str)
+    # Interação clima x iluminação (ambos existem)
+    if "weather" in df.columns and "lighting" in df.columns:
+        df["weather_lighting"] = (
+            df["weather"].astype(str) + "_" + df["lighting"].astype(str)
+        )
 
-    return df
+    return df  
 
+**Aplicação Feature Engineering**  
 X = add_features(X)
 X_test = add_features(X_test)
 
-# encoding para novas features categóricas
+
+**Verificando o nome exato das colunas**
+print(train.columns)
+
+
+**Encoding das Novas Features Categóricas** 
+
 for col in X.select_dtypes(include="object").columns:
     le = LabelEncoder()
     X[col] = le.fit_transform(X[col])
     X_test[col] = le.transform(X_test[col])
 
-# Inicializar modelos estáveis✔️ CatBoost — tende a ser o melhor em tabular
+
+**Inicializar modelos estáveis✔️ CatBoos - robusto para dados tabulares**
+
 cat_model = CatBoostRegressor(
     iterations=1200,
     learning_rate=0.03,
     depth=6,
     loss_function="RMSE",
-    random_seed=42
+    random_seed=42,
+    verbose=False
 )
 
-# LightGBM — rápido e forte
+
+**✔️ LightGBM — rápido e forte** 
 lgb_model = LGBMRegressor(
     n_estimators=1500,
     learning_rate=0.03,
@@ -105,12 +172,13 @@ lgb_model = LGBMRegressor(
     colsample_bytree=0.8,
     random_state=42
 )
-LightGBM — rápido e forte 
 
-# LGBMRegressor(colsample_bytree=0.8, learning_rate=0.03, n_estimators=1500,
-              random_state=42, subsample=0.8) 
 
-# Validação KFold + Treinamento + Predições 
+print(lgb_model)  
+
+
+**Validação KFold + Treinamento + Predições**
+
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
 cat_oof = np.zeros(len(X))
@@ -119,33 +187,64 @@ lgb_oof = np.zeros(len(X))
 cat_preds = np.zeros(len(X_test))
 lgb_preds = np.zeros(len(X_test)) 
 
-for train_idx, val_idx in kf.split(X):
+
+**Loop de Treinamento**  
+
+for fold, (train_idx, val_idx) in enumerate(kf.split(X), 1):
+
+    print(f"Treinando fold {fold}")
+
     X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
     y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
-    # === CatBoost ===
-    cat_model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=False)
+    # CatBoost
+    cat_model.fit(
+        X_train, y_train,
+        eval_set=(X_val, y_val),
+        early_stopping_rounds=50
+    )
+
     cat_oof[val_idx] = cat_model.predict(X_val)
     cat_preds += cat_model.predict(X_test) / kf.n_splits
 
-# Medir estabilidade e RMSE 
-rmse_cat = mean_squared_error(y, cat_oof, squared=False)
-rmse_lgb = mean_squared_error(y, lgb_oof, squared=False)
+    # LightGBM
+    lgb_model.fit(X_train, y_train)
 
-print("RMSE CatBoost:", rmse_cat)
-print("RMSE LightGBM:", rmse_lgb) 
+    lgb_oof[val_idx] = lgb_model.predict(X_val)
+    lgb_preds += lgb_model.predict(X_test) / kf.n_splits
 
-# Ensemble (média ponderada) — quase sempre melhora 
-final_preds = 0.6 * cat_preds + 0.4 * lgb_preds 
 
-# Criar arquivo de submissão 
-sample_submission = pd.read_csv("/kaggle/input/playground-series-s5e10/sample_submission.csv") 
+**Medir estabilidade e RMSE** 
+
+print("RMSE CatBoost:", mean_squared_error(y, cat_oof, squared=False))
+print("RMSE LightGBM:", mean_squared_error(y, lgb_oof, squared=False))
+
+**Ensemble (média ponderada) — quase sempre melhora**
+
+final_preds = 0.6 * cat_preds + 0.4 * lgb_preds
+
+
+**Criar arquivo de submissão**  
+
+sample_submission = pd.read_csv("/kaggle/input/playground-series-s5e10/sample_submission.csv")
 
 submission = sample_submission.copy()
 submission["accident_risk"] = final_preds
 submission.to_csv("submission.csv", index=False)
 
 submission.head()
+
+
+||id|accident_risk|
+|---|---|---|
+|0|517754|0.467998|
+|1|517755|0.197362|
+|2|517756|0.301725|
+|3|517757|0.509644|
+|4|517758|0.638469|
+
+
+
 
 
 
